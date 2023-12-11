@@ -1,26 +1,21 @@
 # Automated Updates and Calculations in 'DeFi Landscape LP Opportunities'
 
-
-
 # 1. Setup
 
-# Install and import all relevant libraries
-
+# Import all relevant libraries
 import pandas as pd
+import json
+from datetime import datetime as dt
+import csv
 import requests
 import gspread
+import gspread_dataframe as gd
 from oauth2client.service_account import ServiceAccountCredentials
-from google.colab import drive
+from pydrive.auth import GoogleAuth
+from pydrive.drive import GoogleDrive
 from collections import defaultdict
 
-# Connect to Google Sheets API and setup Defillama API
-
-drive.mount('/content/drive')
-
-# Set up Google Sheets API credentials
-scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-credentials = ServiceAccountCredentials.from_json_keyfile_name('/content/drive/My Drive/Colab Notebooks/lp-landscape-analysis-dd6d6479b244.json', scope)
-gc = gspread.authorize(credentials)
+# Setup Defillama API
 
 # API TVL base URL
 tvl_base_url = 'https://api.llama.fi'
@@ -32,62 +27,47 @@ yields_base_url = 'https://yields.llama.fi'
 
 # 2. Update Data in 'DeFi Landscape LP Opportunities'
 
-# HELPER FUNCTIONS
+# Helper functions
 # Converts a dataframe column from str to date format in-place
 def df_str_to_date(df, column_name, date_format):
   df[column_name] = pd.to_datetime(df[column_name], format=date_format, errors='raise')
   df[column_name] = df[column_name].dt.date
 
-# Open spreadsheet and load relevant tabs
+# Read in list from CSV file
+def read_list_from_csv(filename):
+  data_list = []
 
-# Open the Google Sheet we'll be reading and writing to
-lp_landscape = gc.open('DeFi Landscape LP Opportunities_v2')
+  with open(filename, newline='') as csvfile:
+      # Create a CSV reader
+      reader = csv.reader(csvfile)
 
-# Select the 'Project Ratings' tab and read the data into a dataframe
-project_ratings_sheet = lp_landscape.worksheet("Project Ratings")
-lp_project_ratings = project_ratings_sheet.get_all_records()
-lp_project_ratings_df = pd.DataFrame(lp_project_ratings)
+      # Iterate over each row in the CSV file
+      for row in reader:
+          # Each row is a list
+          data_list.append(row)
 
-# Select the 'Stables' tab and read the data into a dataframe
-stables_sheet = lp_landscape.worksheet("Stables")
-lp_stables = stables_sheet.get_all_records()
-lp_stables_df = pd.DataFrame(lp_stables)
+  data_list = [sublist[0] for sublist in data_list]
 
-# Select 'Pool Yields' tab
-pool_yields_sheet = lp_landscape.worksheet("Pool Yields")
+  return data_list
 
-# Select 'Protocol Historicals' tab
-protocol_historicals_sheet = lp_landscape.worksheet("Protocol Historicals")
-
-# Select 'Pool Historicals' tab
-pool_historicals_sheet = lp_landscape.worksheet("Pool Historicals")
-
-# Select 'Protocol Info' tab
-protocol_info_sheet = lp_landscape.worksheet("Protocol Info")
-
-# Select 'Historical Chain TVL' tab
-historical_chain_tvl_sheet = lp_landscape.worksheet("Historical Chain TVL")
 
 
 
 # 2.1. Update data in 'Project Ratings' tab
 
-# Extract protocol names from the worksheet as a list in the format used by Defillama API (slug)
-protocol_slugs = lp_project_ratings_df["API Protocol Name"].tolist()
+# Read in list of protocols
+protocols_filename = "protocol_slugs.csv"
+protocol_slugs = read_list_from_csv(protocols_filename)
 
 # 2.1.1. Update current protocol TVLs
-
 # Get current TVLs for the list of protocols and return them as a list
 protocol_tvls = [requests.get(tvl_base_url + '/tvl/' + protocol).json() for protocol in protocol_slugs]
 
 # Format numbers as millions before writing to spreadsheet
 protocol_tvls_m = [int(tvl) / 1000000 for tvl in protocol_tvls]
 
-# Write results stored in protocol_tvls to 'Current TVL ($m)' in 'Project Ratings' tab to update current protocol TVLs
-write_to_column(project_ratings_sheet, "C2", protocol_tvls_m)
 
 # 2.1.2. Update 1-year average protocol TVLs
-
 # Pull historical TVL data for each protocol in the list broken down by token and chain
 protocol_historicals = [requests.get(tvl_base_url + '/protocol/' + protocol).json() for protocol in protocol_slugs]
 
@@ -136,8 +116,6 @@ protocol_names = [x[0] for x in aggregated_protocol_tvls]
 # Create tuples for each protocol comparing aggregated TVL to TVL shown by DL
 protocol_tvl_deltas = list(zip(protocol_names, zip(current_aggregated_protocol_tvls, protocol_tvls)))
 
-protocol_tvl_deltas
-
 
 
 # Aggregate historical TVL broken down by token and chain to get overall historical protocol TVLs
@@ -164,6 +142,7 @@ for protocol in protocol_historicals:
 
   # Add protocol to result list
   clean_protocol_historicals.append(p)
+
 
 # List to store the final result
 historical_protocol_tvls = []
@@ -194,6 +173,7 @@ for protocol in clean_protocol_historicals:
   # Add dataframe to result list
   historical_protocol_tvls.append(aggregated_historicals_df)
 
+
 # Order by date in reverse chronological order
 historical_protocol_tvls = [df.sort_values(by='date', ascending=False) for df in historical_protocol_tvls]
 
@@ -208,7 +188,6 @@ protocol_historicals_df = pd.concat(historical_protocol_tvls, axis = 1, sort=Fal
 
 
 # 2.2 Update 'Pool Yields' raw data tab
-
 # Get all pool yields
 yields = requests.get(yields_base_url + '/pools')
 
@@ -218,10 +197,10 @@ pool_yields_df = pd.DataFrame(yields.json()['data'])
 
 
 
-# 2.3 Update 'Pool Historicals' raw data tab"""
-
-# Extract pool ID's from the worksheet as a list
-pool_ids = lp_stables_df["API pool id"].tolist()
+# 2.3 Update 'Pool Historicals' raw data tab
+# Read in list of pool ids
+pool_ids_filename = "pool_ids.csv"
+pool_ids = read_list_from_csv(pool_ids_filename)
 
 # Get historical TVL and APY data for each pool and return it as a list of data frames
 pool_historicals = [requests.get(yields_base_url + '/chart/' + id).json()['data'] for id in pool_ids]
@@ -246,20 +225,7 @@ pool_historicals_df = pd.concat(pool_historicals_dfs, axis = 1, sort=False)
 
 
 
-
-# 2.4. Update 'Protocol Info' raw data tab
-
-# Get all protocols
-protocols = requests.get(tvl_base_url + '/protocols')
-
-# Convert Protocols response to data frame
-protocols_df = pd.DataFrame(protocols.json())
-
-
-
-
-# 2.5. Update 'Historical Chain TVL' raw data tab
-
+# 2.4. Update 'Historical Chain TVL' raw data tab
 # Get historical TVL data for Ethereum
 eth_tvl = requests.get(tvl_base_url + '/v2/historicalChainTvl/Ethereum')
 
@@ -276,30 +242,27 @@ eth_tvl_df = eth_tvl_df.sort_values(by='date', ascending=False)
 
 
 
-# 2.6. Update data in 'LP Update Historicals' tab for LP Landscape Update distribution charts
+# 2.5. Update 'Protocol Info' raw data tab
+# Get all protocols
+protocols = requests.get(tvl_base_url + '/protocols')
 
+# Convert Protocols response to data frame
+protocols_df = pd.DataFrame(protocols.json())
+
+
+
+
+# 2.6. Update data in 'LP Update Historicals' tab for LP Landscape Update distribution charts
 # Create dictionary to associate all pool ids to their historical data
 all_pools_dict = dict(zip(pool_ids, pool_historicals_dfs))
 
-# Select the 'eUSD Curve Comps' tab and read the data into a dataframe
-eusd_curve_sheet = lp_landscape.worksheet("eUSD Curve Comps")
-lp_eusd_curve = eusd_curve_sheet.get_all_records()
-lp_eusd_curve_df = pd.DataFrame(lp_eusd_curve)
+# Read in list of Curve eUSD peer pool ids
+eusd_curve_peer_pools_filename = "eusd_curve_peer_pool_ids.csv"
+eusd_curve_peer_pool_ids = read_list_from_csv(eusd_curve_peer_pools_filename)
 
-# Select 'LP Update Historicals' tab
-lp_update_historicals_sheet = lp_landscape.worksheet("LP Update Historicals")
-
-# Extract pool names from the worksheet as a list
-eusd_peer_pool_ids = lp_eusd_curve_df["API pool id"].tolist()
-
-# MIM-3CRV pool id
-mim_3crv_pool_id = "8a20c472-142c-4442-b724-40f2183c073e"
-
-# Remove MIM-3CRV pool from list if present
-if mim_3crv_pool_id in eusd_peer_pool_ids: eusd_peer_pool_ids.remove(mim_3crv_pool_id)
 
 # Keep only data for pools contained in pool id list
-eusd_curve_peer_pools = {k: all_pools_dict[k] for k in eusd_peer_pool_ids}
+eusd_curve_peer_pools = {k: all_pools_dict[k] for k in eusd_curve_peer_pool_ids}
 
 # Separate values (dataframes) from keys (pool id's) before concatenating
 eusd_curve_peer_pools_dfs = list(eusd_curve_peer_pools.values())
@@ -308,14 +271,7 @@ eusd_curve_peer_pools_dfs = list(eusd_curve_peer_pools.values())
 eusd_curve_peer_pools_df = pd.concat(eusd_curve_peer_pools_dfs, axis = 1, sort=False)
 
 
-
 # 2.7. Aggregate historical data to create indices for RToken peer groups
-
-# Select the 'hyUSD Comps' tab and read the data into a dataframe
-hyusd_sheet = lp_landscape.worksheet("hyUSD Comps")
-lp_hyusd = hyusd_sheet.get_all_records()
-lp_hyusd_df = pd.DataFrame(lp_hyusd)
-
 # RToken pool id's
 eusd_pool_id = "381b00d5-b4f8-489c-95cb-40018c72bdd3"
 hyusd_pool_id = "3378bced-4bde-4ccf-b742-7d5c8ebb7720"
@@ -342,14 +298,11 @@ def aggregate_historicals(all_pools_dict, pool_id_list):
   return aggregated_df
 
 
-
 # hyUSD Comps
 
-# Extract pool names from the worksheet as a list
-hyusd_peer_pool_ids = lp_hyusd_df["API pool id"].tolist()
-
-# Remove hyUSD from list
-if hyusd_pool_id in hyusd_peer_pool_ids: hyusd_peer_pool_ids.remove(hyusd_pool_id)
+# Read in list of Curve eUSD peer pool ids
+hyusd_peers_ids_filename = "hyusd_peers_ids.csv"
+hyusd_peers_ids = read_list_from_csv(hyusd_peers_ids_filename)
 
 # Aggregate historicals for peer pools and store mean values as dataframe
-hyusd_peers_df = aggregate_historicals(all_pools_dict, hyusd_peer_pool_ids)
+hyusd_peers_df = aggregate_historicals(all_pools_dict, hyusd_peers_ids)
