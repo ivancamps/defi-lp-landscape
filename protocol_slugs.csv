@@ -1,6 +1,7 @@
 aave
 curve-finance
-compound
+compound-v2
+compound-v3
 convex-finance
 reserve
 makerdao
@@ -27,3 +28,4 @@ inverse-finance
 synthetix
 uwu-lend
 origin-dollar
+prisma-finance
